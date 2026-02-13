@@ -1,0 +1,21 @@
+{
+  "name": "tiktok",
+  "version": "1.0.0",
+  "description": "Minimal Node.js example that connects to TikTok LIVE using the tiktok-live-connector library and logs chat/gift events.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [
+    "tiktok",
+    "live",
+    "connector"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "tiktok-live-connector": "^2.1.1-beta1"
+  }
+}
