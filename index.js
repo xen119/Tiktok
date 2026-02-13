@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ override: true });
 const { execFile } = require("node:child_process");
 const { TikTokLiveConnection, WebcastEvent, ControlEvent } = require("tiktok-live-connector");
 
@@ -61,8 +61,19 @@ const sendVlcCommand = () => {
   const commandUrl = new URL(vlcStatusUrl);
   commandUrl.searchParams.set("command", VLC_COMMAND);
 
-  const cmd = `curl --user :${VLC_PASSWORD} "${commandUrl.toString()}"`;
-  const child = execFile("cmd", ["/c", cmd], { timeout: VLC_TIMEOUT_MS }, (error, stdout, stderr) => {
+  const args = [
+    "--user",
+    `:${VLC_PASSWORD}`,
+    commandUrl.toString(),
+  ];
+
+  logEvent("vlc-command", {
+    command: "curl",
+    args: args,
+    url: commandUrl.toString(),
+  });
+
+  const child = execFile("curl", args, { timeout: VLC_TIMEOUT_MS }, (error, stdout, stderr) => {
     if (error) {
       logEvent("vlc-error", { error: error.message, stderr: stderr?.toString() });
       return;

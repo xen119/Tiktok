@@ -10,7 +10,9 @@ npm install
 
 ## Configuration
 
-Copy `.env.example` to `.env` or set the variables in your shell. The connector expects:
+Copy `.env.example` to `.env` or set the variables in your shell. Dotenv now overrides existing environment variables (see `dotenv.config({ override: true })`), so updating `.env` is enough even if you previously exported a different `VLC_PASSWORD`.
+
+The connector expects:
 
 | Variable | Description |
 | --- | --- |
@@ -34,6 +36,7 @@ The script:
 - loads variables using `dotenv`, validates the required values, and connects to TikTok LIVE;
 - logs connection lifecycle events, chat comments, and gift metadata;
 - calls VLC’s HTTP API (`VLC_COMMAND`) whenever a non-streak gift arrives or a streak concludes, effectively skipping to the next song.
+- logs the exact `curl --user ...` arguments that are executed so you can compare what is sent against your working command.
 - the script calls `curl --user :Password http://localhost:8080/requests/status.json?command=…` (with your configured credentials), so VLC receives the exact request you verified.
 - listens for chat comments; if a viewer types `/skip`, VLC will skip just like a gift.
 
