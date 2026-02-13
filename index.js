@@ -29,6 +29,49 @@ const connection = new TikTokLiveConnection(username, {
   enableExtendedGiftInfo: true,
 });
 
+const GIFT_SKIP_CACHE_MS = 5000;
+const GIFT_SKIP_PRUNE_MS = 60000;
+const processedGiftKeys = new Map();
+
+const buildGiftKey = (gift) => {
+  return (
+    gift.logId ||
+    gift.orderId ||
+    gift.common?.msgId?.toString?.() ||
+    gift.groupId ||
+    `${gift.user?.uniqueId || gift.user?.userId || "anonymous"}:${gift.giftId}:${
+      gift.repeatCount
+    }:${gift.repeatEnd ?? false}`
+  );
+};
+
+const cleanupGiftKeyCache = (now) => {
+  for (const [key, timestamp] of processedGiftKeys) {
+    if (now - timestamp > GIFT_SKIP_PRUNE_MS) {
+      processedGiftKeys.delete(key);
+    }
+  }
+};
+
+const isDuplicateGiftSkip = (key) => {
+  if (!key) {
+    return false;
+  }
+  const now = Date.now();
+  const existing = processedGiftKeys.get(key);
+  const isDuplicate = existing && now - existing < GIFT_SKIP_CACHE_MS;
+  if (isDuplicate) {
+    processedGiftKeys.set(key, now);
+  }
+  return isDuplicate;
+};
+
+const markGiftSkipSent = (key) => {
+  const now = Date.now();
+  processedGiftKeys.set(key, now);
+  cleanupGiftKeyCache(now);
+};
+
 const logEvent = (label, data) => {
   console.log(`[${label}]`, data);
 };
@@ -87,17 +130,31 @@ const sendVlcCommand = () => {
 };
 
 connection.on(WebcastEvent.GIFT, (gift) => {
+  const giftKey = buildGiftKey(gift);
+
   logEvent("gift", {
     user: gift.user.uniqueId,
     name: gift.giftName,
     quantity: gift.repeatCount,
     streakEnd: gift.repeatEnd === true,
+    giftKey,
   });
 
   if (gift.giftType === 1 && !gift.repeatEnd) {
     return;
   }
 
+  if (isDuplicateGiftSkip(giftKey)) {
+    logEvent("gift", {
+      user: gift.user.uniqueId,
+      name: gift.giftName,
+      duplicateSkip: true,
+      giftKey,
+    });
+    return;
+  }
+
+  markGiftSkipSent(giftKey);
   sendVlcCommand();
 });
 
