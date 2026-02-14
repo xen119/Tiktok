@@ -72,16 +72,123 @@ const markGiftSkipSent = (key) => {
   cleanupGiftKeyCache(now);
 };
 
+const LIKE_TARGET_BASE = 1000;
+const LIKE_CHECK_INTERVAL_BASE_MS = 2 * 60 * 1000;
+const LIKE_GROWTH_FACTOR = 2;
+let nextLikeTarget = LIKE_TARGET_BASE;
+let nextCheckIntervalMs = LIKE_CHECK_INTERVAL_BASE_MS;
+let latestTotalLikeCount = 0;
+let likeCheckTimer = null;
+
+const advanceLikeTarget = () => {
+  nextLikeTarget *= LIKE_GROWTH_FACTOR;
+  nextCheckIntervalMs *= LIKE_GROWTH_FACTOR;
+};
+
+const handleLikeTargetHit = (source) => {
+  if (latestTotalLikeCount >= nextLikeTarget) {
+    logEvent("like-target-hit", {
+      source,
+      target: nextLikeTarget,
+      totalLikes: latestTotalLikeCount,
+    });
+    sendVlcCommand();
+    advanceLikeTarget();
+    return true;
+  }
+  return false;
+};
+
+function runLikeCheck(source) {
+  logEvent("like-check", {
+    source,
+    totalLikes: latestTotalLikeCount,
+    target: nextLikeTarget,
+    checkIntervalMs: nextCheckIntervalMs,
+  });
+
+  handleLikeTargetHit(source);
+  scheduleLikeCheck();
+}
+
+const scheduleLikeCheck = () => {
+  if (likeCheckTimer) {
+    clearTimeout(likeCheckTimer);
+  }
+  likeCheckTimer = setTimeout(() => runLikeCheck("timer"), nextCheckIntervalMs);
+};
+
+const CONNECTION_RETRY_BASE_MS = 10 * 1000;
+const MAX_CONNECTION_RETRY_MS = 5 * 60 * 1000;
+let connectRetryAttempt = 0;
+let connectRetryTimer = null;
+let isConnecting = false;
+
+const scheduleConnectionRetry = (reason) => {
+  if (connectRetryTimer) {
+    return;
+  }
+  connectRetryAttempt += 1;
+  const delay = Math.min(CONNECTION_RETRY_BASE_MS * connectRetryAttempt, MAX_CONNECTION_RETRY_MS);
+  logEvent("connection-retry", { attempt: connectRetryAttempt, delay, reason });
+  connectRetryTimer = setTimeout(() => {
+    connectRetryTimer = null;
+    startConnection();
+  }, delay);
+};
+
+const startConnection = () => {
+  if (isConnecting) {
+    return;
+  }
+  isConnecting = true;
+  connection
+    .connect()
+    .then(() => {
+      isConnecting = false;
+      connectRetryAttempt = 0;
+      if (connectRetryTimer) {
+        clearTimeout(connectRetryTimer);
+        connectRetryTimer = null;
+      }
+    })
+    .catch((err) => {
+      isConnecting = false;
+      logEvent("connect-failed", err);
+      scheduleConnectionRetry(err?.name ?? err?.message ?? "connect-failed");
+    });
+};
+
 const logEvent = (label, data) => {
   console.log(`[${label}]`, data);
 };
 
 connection.on(ControlEvent.CONNECTED, (state) => {
   logEvent("connected", { roomId: state.roomId });
+  connectRetryAttempt = 0;
+  isConnecting = false;
+  if (connectRetryTimer) {
+    clearTimeout(connectRetryTimer);
+    connectRetryTimer = null;
+  }
 });
 
-connection.on(ControlEvent.DISCONNECTED, () => logEvent("disconnected"));
-connection.on(ControlEvent.ERROR, (error) => logEvent("error", error));
+connection.on(ControlEvent.DISCONNECTED, () => {
+  logEvent("disconnected");
+  scheduleConnectionRetry("disconnected");
+});
+
+connection.on(ControlEvent.ERROR, (error) => {
+  logEvent("error", error);
+  if (
+    error?.exception?.name === "UserOfflineError" ||
+    error?.name === "UserOfflineError" ||
+    error?.message?.includes("isn't online")
+  ) {
+    scheduleConnectionRetry("user-offline");
+  }
+});
+
 connection.on(ControlEvent.STREAM_END, ({ action }) => {
   logEvent("streamEnd", { action });
 });
@@ -98,6 +205,28 @@ connection.on(WebcastEvent.CHAT, (message) => {
   ) {
     sendVlcCommand();
   }
+});
+
+connection.on(WebcastEvent.LIKE, (likeMessage) => {
+  const totalLikes = likeMessage.totalLikeCount ?? 0;
+  latestTotalLikeCount = Math.max(latestTotalLikeCount, totalLikes);
+  logEvent("like", {
+    user: likeMessage.user?.uniqueId,
+    likeCount: likeMessage.likeCount,
+    totalLikes,
+  });
+
+  if (handleLikeTargetHit("likeEvent")) {
+    scheduleLikeCheck();
+  }
+});
+
+connection.on(WebcastEvent.FOLLOW, (followMessage) => {
+  logEvent("follow", {
+    user: followMessage.user?.uniqueId,
+    displayText: followMessage.displayTextForAudience?.defaultPattern,
+  });
+  sendVlcCommand();
 });
 
 const sendVlcCommand = () => {
@@ -158,7 +287,5 @@ connection.on(WebcastEvent.GIFT, (gift) => {
   sendVlcCommand();
 });
 
-connection.connect().catch((err) => {
-  logEvent("connect-failed", err);
-  process.exit(1);
-});
+scheduleLikeCheck();
+startConnection();
